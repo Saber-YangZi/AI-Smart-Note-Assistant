@@ -96,14 +96,3 @@ ehthumbs_vista.db
 # CodeGraph index
 .codegraph/
 
-# ── 运行时产物（CI/CD 补充）──────────────────────────
-# 后端图片/附件抽取落盘目录
-storage/
-# 本地向量库（qdrant 本地持久化 / chromadb）
-qdrant/
-# 本地下载的 RAG 模型权重（bge-m3 / bge-reranker 等，体积大不提交）
-backend/models/
-# RAGAS / DeepEval 评测产物报告
-report_ragas*.json
-backend/report_ragas*.json
-
