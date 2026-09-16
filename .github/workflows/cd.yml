@@ -1,0 +1,93 @@
+# ============================================================
+# CD：构建 Web 层镜像 → 推 GHCR → SSH 到目标主机 docker compose 更新
+# 触发：push 到 main（也可用 tag v* 走同样的构建+部署）
+# 前置：目标主机已安装 docker + docker compose，且登上过 GHCR（或用 RUNNER token 拉取）
+# 涉及 secrets：DEPLOY_HOST/DEPLOY_USER/DEPLOY_SSH_KEY（可选用 DEPLOY_PORT）
+# ============================================================
+name: CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BASE: ghcr.io/saber-yangzi/ai-smart-note-assistant
+  COMPOSE_FILE: docker-compose.prod.yml
+
+jobs:
+  build-and-deploy:
+    name: 构建 + 推送 + SSH 部署
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # 构建前端需要 deploy/container-nginx.conf 在根 context 中，故权限充分
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 登录 GHCR（GITHUB_TOKEN 仅对本仓库 org 内含 images/packages 权限）──
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set short SHA
+        id: meta
+        run: echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # ── 构建并推送后端 (backend Dockerfile，context=仓库根) ──
+      - name: Build & push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_BASE }}:backend-${{ steps.meta.outputs.sha }}
+            ${{ env.IMAGE_BASE }}:backend-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── 构建并推送前端 (front Dockerfile，context=仓库根) ──
+      - name: Build & push front
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: front/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_BASE }}:front-${{ steps.meta.outputs.sha }}
+            ${{ env.IMAGE_BASE }}:front-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── SSH 到目标主机拉取并更新 ──
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || '22' }}
+          script: |
+            set -e
+            cd "${{ secrets.DEPLOY_DIR || '/opt/ai-note' }}"
+            docker logout ${{ env.REGISTRY }} || true
+            echo '${{ secrets.GITHUB_TOKEN }}' | docker login ${{ env.REGISTRY }} -u '${{ github.actor }}' --password-stdin
+            docker compose -f ${{ env.COMPOSE_FILE }} pull
+            docker compose -f ${{ env.COMPOSE_FILE }} up -d --remove-orphans
+            # 健康检查：前端 8080 就绪即视为部署完成
+            for i in $(seq 1 30); do
+              if curl -sf -o /dev/null "http://127.0.0.1:8080/"; then
+                echo "部署完成：前端 8080 已就绪"
+                "${CI:-}" && exit 0 || exit 0
+              fi
+              sleep 3
+            done
+            echo "等待前端 8080 就绪超时" >&2; exit 1

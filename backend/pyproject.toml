@@ -54,6 +54,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
+    "pytest-cov>=5.0.0",
+    "coverage>=7.0.0",
     "black>=24.0.0",
     "isort>=5.12.0",
     "ruff>=0.3.0",
@@ -63,5 +65,49 @@ dev = [
 url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 default = true
 
+[dependency-groups]
+dev = [
+    "deepeval==3.9.9",
+]
+
 [tool.uv]
 index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+
+# ── 代码风格 / 静态检查 ──────────────────────────────────────────
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+# 常见噪声项先排除，避免让旧代码大面积红（可按需逐步放开）
+ignore = [
+    "E501",          # 行长度（已开 120，仍有超长可容忍）
+    "B008",          # FastAPI 依赖注入默认值（Depends(...)），后端大量使用
+    "UP007",         # 旧代码使用 Optional[...] 约定，统一后此项可能报
+]
+
+[tool.ruff.format]
+preview = true
+
+# ── Pytest ─────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"
+markers = [
+    "deepeval: RAG 质量门禁测试（需 DashScope API + 向量库 + MySQL/Redis，默认跳过）",
+    "perf: 性能测试（需后端 :8000 + 模型服务，默认跳过）",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["*/tests/*", "*/models/*", "*/scripts/*"]
+
+[tool.coverage.report]
+fail_under = 40
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "def __repr__",
+]
